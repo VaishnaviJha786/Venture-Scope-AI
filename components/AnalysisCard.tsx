@@ -56,13 +56,13 @@ const AnalysisCard: React.FC<{ section: AnalysisSection }> = ({ section }) => {
         <div>
           <h4 className="font-semibold text-green-400 mb-2">Pros</h4>
           <ul className="space-y-2">
-            {section.pros.map((pro, i) => <ListItem key={i} text={pro} isPro={true} />)}
+            {(section.pros || []).map((pro, i) => <ListItem key={i} text={pro} isPro={true} />)}
           </ul>
         </div>
         <div>
           <h4 className="font-semibold text-red-400 mb-2">Cons</h4>
           <ul className="space-y-2">
-            {section.cons.map((con, i) => <ListItem key={i} text={con} isPro={false} />)}
+            {(section.cons || []).map((con, i) => <ListItem key={i} text={con} isPro={false} />)}
           </ul>
         </div>
       </div>

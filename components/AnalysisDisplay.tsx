@@ -63,7 +63,7 @@ const AnalysisDisplay: React.FC<AnalysisDisplayProps> = ({ result, sources }) =>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {result.sections.map((section, index) => (
+        {(result.sections || []).map((section, index) => (
           <AnalysisCard key={index} section={section} />
         ))}
       </div>
