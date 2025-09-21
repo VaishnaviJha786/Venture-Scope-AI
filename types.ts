@@ -20,8 +20,8 @@ export interface AnalysisResult {
 }
 
 export interface GroundingChunk {
-  web: {
-    // FIX: Made uri and title optional to align with the Gemini API's GroundingChunk type.
+  // FIX: The 'web' property is optional in the Gemini API's GroundingChunk type.
+  web?: {
     uri?: string;
     title?: string;
   }

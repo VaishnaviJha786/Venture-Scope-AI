@@ -1,97 +1,78 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import type { StartupInput, AnalysisResult, GroundingChunk, GroundingSource } from '../types';
 
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-export const analyzeStartup = async (
-  inputs: StartupInput
-): Promise<{ analysis: AnalysisResult; sources: GroundingSource[] }> => {
-  const { companyName, companyWebsite, founderInfo, pitchDeck } = inputs;
-
-  const prompt = `
-    ROLE: You are a world-class venture capital analyst at a top-tier firm.
+const buildPrompt = (inputs: StartupInput): string => {
+  return `
+    Analyze the provided startup information and act as a venture capital analyst.
+    Your analysis MUST be grounded in publicly available data using the Google Search tool.
     
-    TASK: Conduct a comprehensive investment analysis of the startup "${companyName}". Synthesize the provided private materials with publicly available data to generate a detailed investment memo.
+    **Startup Information:**
+    - Company Name: ${inputs.companyName}
+    - Company Website: ${inputs.companyWebsite}
+    - Founder(s) Info: ${inputs.founderInfo || 'Not provided.'}
+    - Pitch Deck / Business Plan: ${inputs.pitchDeck}
+
+    **Your Task:**
+    Generate a comprehensive investment memo. For each section, provide a rating from 1 to 10 (1=very weak, 10=excellent), a detailed analysis, and a list of specific pros and cons. The analysis must be objective and data-driven, referencing public information where possible.
+
+    **Output Format:**
+    You MUST return the analysis as a single JSON object that conforms to the provided schema. Do not include any markdown formatting like \`\`\`json.
+
+    **Analysis Sections to Include:**
+    1.  **Market Opportunity:** Assess the total addressable market (TAM), market growth, and current trends.
+    2.  **Product & Technology:** Evaluate the product's innovation, competitive advantage, and technological feasibility.
+    3.  **Team Assessment:** Analyze the founders' experience, domain expertise, and ability to execute.
+    4.  **Competitive Landscape:** Identify key competitors and the startup's differentiation.
+    5.  **Business Model:** Evaluate the revenue model, customer acquisition strategy, and scalability.
     
-    CONTEXT & PRIVATE MATERIALS:
-    - Company Name: ${companyName}
-    - Company Website: ${companyWebsite}
-    - Founder Information (LinkedIn profiles, bios): ${founderInfo}
-    - Pitch Deck / Business Plan Summary:
-    ---
-    ${pitchDeck}
-    ---
+    Finally, provide an "Overall Score" (from 0 to 100) and a concise "Executive Summary" of your findings.
+    `;
+};
 
-    INSTRUCTIONS:
-    1.  Use Google Search to find public information about the company, founders, market, and competitors.
-    2.  Evaluate the startup across the following key dimensions: Market Opportunity, Product & Technology, Team Assessment, Business Model, and Competitive Landscape.
-    3.  For each dimension, provide a rating from 1-10, a detailed analysis, and a bulleted list of pros and cons.
-    4.  Provide a final overall investment score from 1-100 and a concise executive summary.
-    5.  Be critical, objective, and data-driven in your analysis. Your audience is an investment committee.
-    6.  Return your complete analysis in a valid JSON object format that adheres to this TypeScript interface:
-    \`\`\`typescript
-    interface AnalysisSection {
-      title: string;
-      rating: number;
-      details: string;
-      pros: string[];
-      cons: string[];
-    }
+// This function now relies on the environment variable for the API key.
+export const analyzeStartup = async (inputs: StartupInput): Promise<{ analysis: AnalysisResult; sources: GroundingSource[] }> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    interface AnalysisResult {
-      overallScore: number;
-      executiveSummary: string;
-      sections: AnalysisSection[];
-    }
-    \`\`\`
-  `;
+  const prompt = buildPrompt(inputs);
 
-  let responseText = "";
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
+        // responseMimeType and responseSchema are not allowed when using the googleSearch tool.
         tools: [{ googleSearch: {} }],
-        temperature: 0.2,
       },
     });
 
-    responseText = response.text;
+    let responseText = response.text;
+    
+    // To make parsing more robust, extract JSON from markdown code blocks if they exist.
+    const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
+    const match = responseText.match(jsonRegex);
+    if (match && match[1]) {
+      responseText = match[1];
+    }
+    
+    const analysis: AnalysisResult = JSON.parse(responseText.trim());
 
     const groundingChunks: GroundingChunk[] = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    // FIX: Replaced map().filter() with reduce() to safely handle optional 'uri' and 'title' properties from the API and correctly type the resulting 'sources' array.
-    const sources: GroundingSource[] = groundingChunks.reduce<GroundingSource[]>((acc, chunk) => {
-      if (chunk.web?.uri && chunk.web?.title) {
-        acc.push({ uri: chunk.web.uri, title: chunk.web.title });
-      }
-      return acc;
-    }, []);
-
-    // Filter out duplicate sources based on URI
-    const uniqueSources = Array.from(new Map(sources.map(item => [item.uri, item])).values());
     
-    // The model may wrap the output in markdown, so we extract it here.
-    let jsonString = responseText.trim();
-    const match = jsonString.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (match) {
-        jsonString = match[1];
-    }
+    const sources: GroundingSource[] = groundingChunks
+      .map(chunk => chunk.web)
+      .filter(web => web && web.uri && web.title)
+      .map(web => ({ uri: web.uri!, title: web.title! }));
 
-    const analysis: AnalysisResult = JSON.parse(jsonString);
+    // Deduplicate sources based on URI
+    const uniqueSources = Array.from(new Map(sources.map(item => [item['uri'], item])).values());
 
     return { analysis, sources: uniqueSources };
 
   } catch (error) {
-    console.error("Error analyzing startup:", error);
-    if (error instanceof SyntaxError) {
-      console.error("Failed to parse AI response:", responseText);
-      throw new Error("The AI returned a malformed analysis that could not be understood. Please try again.");
+    console.error("Error during Gemini API call or parsing:", error);
+    if (error instanceof Error) {
+        throw new Error(`Failed to analyze startup: ${error.message}. Please check if your API key is valid and your network connection is stable.`);
     }
-    throw new Error("Failed to communicate with the AI model. Please check the console for more details.");
+    throw new Error("An unknown error occurred during the analysis.");
   }
 };

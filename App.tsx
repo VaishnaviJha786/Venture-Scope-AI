@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import type { StartupInput, AnalysisResult, GroundingSource } from './types';
 import { analyzeStartup } from './services/geminiService';
